@@ -46,7 +46,7 @@ Use a string when the binary name is the repo name and latest is OK:
 }
 ```
 
-Use an object only when you need a version, binary rename, binary path, or asset select hint:
+Use an object only when you need a version, binary rename, binary path, or asset select hint. Version can be omitted (equivalent to `"latest"`) to always track head:
 
 ```json
 {
@@ -59,6 +59,7 @@ Use an object only when you need a version, binary rename, binary path, or asset
 ```
 
 Supported object fields: `repo`, `version`, `name`, `path`, `select`.
+`version` may be omitted or set to `"latest"` to track the newest release.
 
 ## Usage
 

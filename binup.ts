@@ -591,11 +591,14 @@ async function updateConfigVersions(configPath: string, config: Config, token: s
     async (pkg) => {
       try {
         const latest = await fetchLatestPackageRelease(pkg, token, platform);
+        const isTrackingLatest = !pkg.version || pkg.version === "latest";
+        if (isTrackingLatest) return { pkg, latest, trackingLatest: true, changed: false };
+
         const currentTags = new Set(candidateTags(pkg));
-        if (currentTags.has(latest.tag_name)) return { pkg, latest, oldVersion: pkg.version ?? "latest", changed: false };
+        if (currentTags.has(latest.tag_name)) return { pkg, latest, trackingLatest: false, changed: false };
         const oldVersion = pkg.version ?? "latest";
         pkg.version = latest.tag_name;
-        return { pkg, latest, oldVersion, changed: true };
+        return { pkg, latest, trackingLatest: false, oldVersion, changed: true };
       } catch (error) {
         return { pkg, error: error instanceof Error ? error.message : String(error) };
       }
@@ -608,6 +611,10 @@ async function updateConfigVersions(configPath: string, config: Config, token: s
   for (const result of results) {
     if ("error" in result) {
       errors.push(`${result.pkg.repo}: ${result.error}`);
+      continue;
+    }
+    if (result.trackingLatest) {
+      console.log(`current       ${result.pkg.repo} (latest)`);
       continue;
     }
     if (!result.changed) {
