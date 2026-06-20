@@ -1,0 +1,200 @@
+{
+  "packages": [
+    {
+      "repo": "abiosoft/colima",
+      "version": "v0.10.3"
+    },
+    {
+      "repo": "alexpasmantier/television",
+      "version": "0.15.9"
+    },
+    {
+      "repo": "amir20/dtop",
+      "version": "v0.7.7"
+    },
+    {
+      "repo": "antonmedv/fx",
+      "version": "39.2.0"
+    },
+    {
+      "repo": "ast-grep/ast-grep",
+      "version": "0.43.0"
+    },
+    {
+      "repo": "astral-sh/uv",
+      "version": "0.11.23",
+      "select": "uv-x86_64-unknown-linux-musl"
+    },
+    "Ataraxy-Labs/weave",
+    {
+      "repo": "Ataraxy-Labs/weave",
+      "name": "weave-driver",
+      "select": "weave-driver"
+    },
+    {
+      "repo": "biomejs/biome",
+      "version": "biomejs/biome@2.5.0"
+    },
+    {
+      "repo": "blopker/codebook",
+      "version": "v0.3.41"
+    },
+    "BurntSushi/ripgrep",
+    "Byron/dua-cli",
+    {
+      "repo": "ByteNess/aws-vault",
+      "version": "v7.12.3"
+    },
+    "caddyserver/caddy",
+    "Canop/broot",
+    "cantino/mcfly",
+    "carvel-dev/ytt",
+    {
+      "repo": "casey/just",
+      "version": "1.53.0"
+    },
+    "charmbracelet/glow",
+    {
+      "repo": "charmbracelet/gum",
+      "version": "v0.17.0"
+    },
+    "charmbracelet/mods",
+    {
+      "repo": "chmln/sd",
+      "version": "v1.1.0"
+    },
+    "chronologos/lightjj",
+    {
+      "repo": "ClementTsang/bottom",
+      "version": "0.14.0",
+      "select": "x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "repo": "dandavison/delta",
+      "version": "0.19.2"
+    },
+    {
+      "repo": "denoland/deno",
+      "version": "v2.8.3"
+    },
+    "derailed/k9s",
+    "devspace-sh/devspace",
+    {
+      "repo": "dmtrKovalenko/fff",
+      "name": "fff-mcp",
+      "select": "fff-mcp-x86_64-unknown-linux-musl"
+    },
+    {
+      "repo": "docker/docker-credential-helpers",
+      "select": "docker-credential-pass"
+    },
+    {
+      "repo": "duckdb/duckdb",
+      "version": "v1.5.4"
+    },
+    {
+      "repo": "F1bonacc1/process-compose",
+      "version": "v1.116.0"
+    },
+    {
+      "repo": "grafana/k6",
+      "version": "v2.0.0"
+    },
+    "Jguer/yay",
+    "joerdav/xc",
+    "junegunn/fzf",
+    {
+      "repo": "k1LoW/mo",
+      "version": "v1.6.0"
+    },
+    {
+      "repo": "keidarcy/e1s",
+      "version": "v1.0.53"
+    },
+    {
+      "repo": "mfontanini/presenterm",
+      "version": "v0.16.1"
+    },
+    "multiprocessio/dsq",
+    "mutagen-io/mutagen-compose",
+    {
+      "repo": "nats-io/natscli",
+      "version": "v0.4.0"
+    },
+    "ogham/exa",
+    {
+      "repo": "open-cli-collective/atlassian-cli",
+      "name": "cfl",
+      "select": "cfl"
+    },
+    {
+      "repo": "open-cli-collective/atlassian-cli",
+      "name": "jtk",
+      "select": "jtk"
+    },
+    {
+      "repo": "openai/codex",
+      "version": "rust-v0.141.0"
+    },
+    {
+      "repo": "Orange-OpenSource/hurl",
+      "version": "8.0.1"
+    },
+    {
+      "repo": "oven-sh/bun",
+      "version": "bun-v1.3.14"
+    },
+    "oxyno-zeta/s3-proxy",
+    {
+      "repo": "pnpm/pnpm",
+      "version": "v11.8.0"
+    },
+    {
+      "repo": "raaymax/lazytail",
+      "version": "v0.10.0"
+    },
+    "runmedev/runme",
+    "sachaos/viddy",
+    "Schniz/fnm",
+    {
+      "repo": "sharkdp/bat",
+      "version": "v0.26.1"
+    },
+    {
+      "repo": "sharkdp/fd",
+      "version": "v10.4.2"
+    },
+    "sigoden/aichat",
+    {
+      "repo": "sigoden/dufs",
+      "select": "dufs-v0.43.0-x86_64-unknown-linux-musl"
+    },
+    "sosedoff/pgweb",
+    {
+      "repo": "sst/opencode",
+      "version": "v1.17.8"
+    },
+    "stacklok/toolhive",
+    "starship/starship",
+    {
+      "repo": "steveyegge/beads",
+      "version": "v1.0.4"
+    },
+    "surrealdb/surrealdb",
+    "TomWright/dasel",
+    "twpayne/chezmoi",
+    {
+      "repo": "watchexec/watchexec",
+      "version": "v2.5.1"
+    },
+    {
+      "repo": "Wilfred/difftastic",
+      "version": "0.69.0"
+    },
+    {
+      "repo": "zellij-org/zellij",
+      "version": "v0.44.3"
+    },
+    "zzet/gortex"
+  ]
+}
