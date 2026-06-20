@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { binariesOf, candidateTags, choosePlatformMatch, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, type ConfigFile, type PackageSpec, type Release } from "./installer";
+import { binariesOf, candidateTags, choosePlatformMatch, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, type ConfigFile, type PackageSpec, type Release } from "./binup";
 
 type Fixture = { pkg: PackageSpec; release: Release; expected: Record<string, Record<string, string | null>> };
 

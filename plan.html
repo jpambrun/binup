@@ -45,9 +45,9 @@
   </ul>
 
   <h2>Proposed command shape</h2>
-  <pre><code>bun installer.ts --config config/tools.json
-bun installer.ts --config specs/current-packages.json --dry-run
-bun installer.ts --config specs/current-packages.json --platform linux-x64 --resolve-only</code></pre>
+  <pre><code>bun binup.ts --config config/tools.json
+bun binup.ts --config specs/current-packages.json --dry-run
+bun binup.ts --config specs/current-packages.json --platform linux-x64 --resolve-only</code></pre>
 
   <h2>JSON config/spec shape</h2>
   <p>The editable config contains packages only. Runtime defaults such as <code>~/bin</code>, <code>gh auth token</code>, GitHub API URL, concurrency, platform token mapping, archive preferences, and file exclusions are hardcoded in the Bun script.</p>
@@ -76,7 +76,7 @@ bun installer.ts --config specs/current-packages.json --platform linux-x64 --res
       <tr><td>4. Select asset</td><td>Score release assets for requested OS/arch, archive type, and package hints.</td><td class="ok">Yes</td></tr>
       <tr><td>5. Skip current</td><td>Compare selected release tag + asset id/name/size with local state. If unchanged and binaries exist, skip download.</td><td class="ok">Yes</td></tr>
       <tr><td>6. Download outdated</td><td>Download only changed assets to a temp directory, extract, find binaries, chmod, then atomically replace.</td><td class="ok">Yes, bounded by hardcoded download concurrency</td></tr>
-      <tr><td>7. Save state</td><td>Write <code>~/.local/state/my-installer/installed.json</code> after successful installs.</td><td>No</td></tr>
+      <tr><td>7. Save state</td><td>Write <code>~/.local/state/binup/installed.json</code> after successful installs.</td><td>No</td></tr>
     </tbody>
   </table>
 
@@ -99,7 +99,7 @@ bun installer.ts --config specs/current-packages.json --platform linux-x64 --res
   </ol>
 
   <h2>Offline artefact-selection unit tests</h2>
-  <p>Unit tests must not call GitHub. Before implementation, run a one-time fixture collection step against the current package list and capture representative release metadata for each package: release tag, asset id, asset name, size, content type, and browser download URL. The captured examples will live inside <code>installer.spec.ts</code> as test fixtures, not in the editable JSON config.</p>
+  <p>Unit tests must not call GitHub. Before implementation, run a one-time fixture collection step against the current package list and capture representative release metadata for each package: release tag, asset id, asset name, size, content type, and browser download URL. The captured examples will live inside <code>binup.spec.ts</code> as test fixtures, not in the editable JSON config.</p>
   <p>The asset resolver will be tested against those fixtures for all supported target platforms: <code>linux-x64</code>, <code>linux-arm64</code>, <code>darwin-x64</code>, and <code>darwin-arm64</code>. Tests should cover successful matches, missing-platform failures, binary rename cases, explicit select hints, duplicate assets, and excluded checksum/signature/SBOM files.</p>
 
   <h2>Download-only-when-new logic</h2>
@@ -117,14 +117,14 @@ installed record = {
 
   <h2>Implementation milestones</h2>
   <ol>
-    <li><strong>Scaffold:</strong> create exactly two source files: <code>installer.ts</code> for implementation and <code>installer.spec.ts</code> for tests.</li>
+    <li><strong>Scaffold:</strong> create exactly two source files: <code>binup.ts</code> for implementation and <code>binup.spec.ts</code> for tests.</li>
     <li><strong>Config loader:</strong> validate package-only JSON and platform normalization.</li>
     <li><strong>GitHub client:</strong> release lookup with <code>gh auth token</code> and retry/rate-limit messages.</li>
-    <li><strong>Fixture collection:</strong> gather current GitHub release asset examples for every package once and embed them in <code>installer.spec.ts</code> so unit tests are offline.</li>
+    <li><strong>Fixture collection:</strong> gather current GitHub release asset examples for every package once and embed them in <code>binup.spec.ts</code> so unit tests are offline.</li>
     <li><strong>Resolver:</strong> asset scoring for linux/darwin × x64/arm64 and per-package select hints, covered by fixture-based tests.</li>
     <li><strong>State/skip:</strong> implement local installed-state comparison.</li>
     <li><strong>Installer:</strong> parallel downloads, archive extraction, binary discovery, atomic replacement.</li>
-    <li><strong>Tests:</strong> run <code>bun test installer.spec.ts</code>; tests use embedded release fixtures and never hit GitHub.</li>
+    <li><strong>Tests:</strong> run <code>bun test binup.spec.ts</code>; tests use embedded release fixtures and never hit GitHub.</li>
   </ol>
 
   <h2>Review decisions</h2>

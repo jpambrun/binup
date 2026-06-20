@@ -5,12 +5,12 @@ import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm,
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-const INSTALL_DIR = process.env.MY_INSTALLER_BIN_DIR ?? join(homedir(), "bin");
-const XATTR_NAME = process.platform === "darwin" ? "com.jpambrun.my-installer" : "user.my-installer";
+const INSTALL_DIR = process.env.BINUP_BIN_DIR ?? process.env.MY_INSTALLER_BIN_DIR ?? join(homedir(), "bin");
+const XATTR_NAME = process.platform === "darwin" ? "com.jpambrun.binup" : "user.binup";
 const CHECK_CONCURRENCY = 12;
 const DOWNLOAD_CONCURRENCY = 4;
 const GITHUB_API = "https://api.github.com";
-const DEFAULT_CONFIG = "specs/current-packages.json";
+const DEFAULT_CONFIG = join(homedir(), ".config/binup/packages.json");
 const EXCLUDED_ASSET_PARTS = [
   "sha256",
   "checksum",
@@ -248,11 +248,11 @@ function parseArgs(argv: string[]): Args {
 
 function printHelpAndExit(): never {
   console.log(`Usage:
-  bun installer.ts [install] [--config specs/current-packages.json] [--dry-run] [--resolve-only] [--platform linux-x64|linux-arm64|darwin-x64|darwin-arm64] [--best-effort]
-  bun installer.ts update [repo...] [--config specs/current-packages.json]
-  bun installer.ts add owner/repo [--binary name] [--config specs/current-packages.json]
+  bun binup.ts [install] [--config ~/.config/binup/packages.json] [--dry-run] [--resolve-only] [--platform linux-x64|linux-arm64|darwin-x64|darwin-arm64] [--best-effort]
+  bun binup.ts update [repo...] [--config ~/.config/binup/packages.json]
+  bun binup.ts add owner/repo [--binary name] [--config ~/.config/binup/packages.json]
 
-Installs into ~/bin. For tests only, set MY_INSTALLER_BIN_DIR=/tmp/bin.`);
+Installs into ~/bin. For tests only, set BINUP_BIN_DIR=/tmp/bin.`);
   process.exit(0);
 }
 
@@ -310,7 +310,7 @@ async function githubGet<T>(url: string, token: string): Promise<T> {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "my-installer-bun",
+      "User-Agent": "binup",
     },
   });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${url}`);
@@ -427,7 +427,7 @@ async function buildPlans(config: Config, token: string, platform: Platform): Pr
 }
 
 async function downloadAndInstall(plan: Plan): Promise<InstalledRecord> {
-  const workDir = await mkdtemp(join(tmpdir(), "my-installer-"));
+  const workDir = await mkdtemp(join(tmpdir(), "binup-"));
   try {
     const assetPath = join(workDir, plan.selected.asset.name);
     await download(plan.selected.asset.browser_download_url, assetPath);
@@ -462,7 +462,7 @@ async function downloadAndInstall(plan: Plan): Promise<InstalledRecord> {
 }
 
 async function download(url: string, dest: string): Promise<void> {
-  const response = await fetch(url, { headers: { "User-Agent": "my-installer-bun" } });
+  const response = await fetch(url, { headers: { "User-Agent": "binup" } });
   if (!response.ok || !response.body) throw new Error(`Download failed ${response.status}: ${url}`);
   await writeFile(dest, response.body as any);
 }
@@ -585,20 +585,38 @@ async function fetchLatestPackageRelease(pkg: PackageSpec, token: string, platfo
 
 async function updateConfigVersions(configPath: string, config: Config, token: string, platform: Platform, repos: string[]): Promise<void> {
   const selectedRepos = repos.length ? new Set(repos) : undefined;
+  const targets = config.packages.filter((pkg) => !selectedRepos || selectedRepos.has(pkg.repo));
+  const results = await pMap(
+    targets,
+    async (pkg) => {
+      try {
+        const latest = await fetchLatestPackageRelease(pkg, token, platform);
+        const currentTags = new Set(candidateTags(pkg));
+        if (currentTags.has(latest.tag_name)) return { pkg, latest, oldVersion: pkg.version ?? "latest", changed: false };
+        const oldVersion = pkg.version ?? "latest";
+        pkg.version = latest.tag_name;
+        return { pkg, latest, oldVersion, changed: true };
+      } catch (error) {
+        return { pkg, error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    { concurrency: CHECK_CONCURRENCY },
+  );
+
   let changed = false;
-  for (const pkg of config.packages) {
-    if (selectedRepos && !selectedRepos.has(pkg.repo)) continue;
-    const latest = await fetchLatestPackageRelease(pkg, token, platform);
-    const currentTags = new Set(candidateTags(pkg));
-    if (currentTags.has(latest.tag_name)) {
-      console.log(`current       ${pkg.repo} ${latest.tag_name}`);
+  const errors = [];
+  for (const result of results) {
+    if ("error" in result) {
+      errors.push(`${result.pkg.repo}: ${result.error}`);
       continue;
     }
-    const oldVersion = pkg.version ?? "latest";
-    pkg.version = latest.tag_name;
+    if (!result.changed) {
+      console.log(`current       ${result.pkg.repo} ${result.latest.tag_name}`);
+      continue;
+    }
     changed = true;
-    console.log(`updated       ${pkg.repo} ${oldVersion} -> ${latest.tag_name}`);
-    console.log(`release       ${releaseUrl(pkg.repo, latest.tag_name)}`);
+    console.log(`updated       ${result.pkg.repo} ${result.oldVersion} -> ${result.latest.tag_name}`);
+    console.log(`release       ${releaseUrl(result.pkg.repo, result.latest.tag_name)}`);
   }
   if (selectedRepos) {
     for (const repo of selectedRepos) {
@@ -606,6 +624,7 @@ async function updateConfigVersions(configPath: string, config: Config, token: s
     }
   }
   if (changed) await writeConfig(configPath, config);
+  if (errors.length > 0) throw new Error(`Failed to update ${errors.length} package(s):\n${errors.join("\n")}`);
 }
 
 async function addPackage(configPath: string, config: Config, token: string, args: Args): Promise<Config> {

@@ -1,11 +1,11 @@
-# my-installer
+# binup
 
 A Bun-based GitHub release binary installer to replace `~/bin/install.sh` and global aqua usage. It only installs binaries published as GitHub release assets.
 
 ## Design
 
 - Editable config contains packages only.
-- Runtime defaults are hardcoded in `installer.ts`:
+- Runtime defaults are hardcoded in `binup.ts`:
   - install directory: `~/bin`
   - GitHub token command: `gh auth token`
   - GitHub API URL
@@ -19,10 +19,11 @@ A Bun-based GitHub release binary installer to replace `~/bin/install.sh` and gl
 ## Files
 
 ```text
-installer.ts                 # installer implementation
-installer.spec.ts            # offline artifact-selection tests
-specs/current-packages.json  # package-only config generated from current tools
-plan.html                    # implementation/review plan
+binup.ts                      # binup implementation
+binup.spec.ts                 # offline artifact-selection tests
+~/.config/binup/packages.json # default editable config
+specs/current-packages.json   # test fixture generated from current tools
+plan.html                     # implementation/review plan
 ```
 
 ## Install dependencies
@@ -64,25 +65,25 @@ Supported object fields: `repo`, `version`, `name`, `path`, `select`.
 Resolve only:
 
 ```nu
-bun installer.ts --config specs/current-packages.json --resolve-only
+bun binup.ts --resolve-only
 ```
 
 Dry run:
 
 ```nu
-bun installer.ts --config specs/current-packages.json --dry-run
+bun binup.ts --dry-run
 ```
 
 Install into the default location, `~/bin`:
 
 ```nu
-bun installer.ts --config specs/current-packages.json
+bun binup.ts
 ```
 
 Update configured packages to their latest GitHub releases:
 
 ```nu
-bun installer.ts update --config specs/current-packages.json
+bun binup.ts update
 ```
 
 Updating prints the GitHub release link for each changed package.
@@ -90,29 +91,29 @@ Updating prints the GitHub release link for each changed package.
 Add a new GitHub package, write it to the config, and install it:
 
 ```nu
-bun installer.ts add sharkdp/hyperfine --config specs/current-packages.json
+bun binup.ts add sharkdp/hyperfine
 ```
 
 If the binary name is not the repository name, provide it explicitly:
 
 ```nu
-bun installer.ts add BurntSushi/ripgrep --binary rg --config specs/current-packages.json
+bun binup.ts add BurntSushi/ripgrep --binary rg
 ```
 
 Test with `/tmp/bin` instead of `~/bin`:
 
 ```nu
-$env.MY_INSTALLER_BIN_DIR = "/tmp/bin"
-bun installer.ts --config specs/current-packages.json
+$env.BINUP_BIN_DIR = "/tmp/bin"
+bun binup.ts --config specs/current-packages.json
 ```
 
 Target another platform for resolution tests:
 
 ```nu
-bun installer.ts --config specs/current-packages.json --platform linux-x64 --resolve-only
-bun installer.ts --config specs/current-packages.json --platform linux-arm64 --resolve-only
-bun installer.ts --config specs/current-packages.json --platform darwin-x64 --resolve-only
-bun installer.ts --config specs/current-packages.json --platform darwin-arm64 --resolve-only
+bun binup.ts --config specs/current-packages.json --platform linux-x64 --resolve-only
+bun binup.ts --config specs/current-packages.json --platform linux-arm64 --resolve-only
+bun binup.ts --config specs/current-packages.json --platform darwin-x64 --resolve-only
+bun binup.ts --config specs/current-packages.json --platform darwin-arm64 --resolve-only
 ```
 
 `--resolve-only` reports unresolved packages as warnings and exits successfully so the whole spec can be reviewed.
@@ -120,15 +121,15 @@ bun installer.ts --config specs/current-packages.json --platform darwin-arm64 --
 Use best-effort mode when installing to continue if some packages have no matching GitHub asset:
 
 ```nu
-bun installer.ts --config specs/current-packages.json --best-effort
+bun binup.ts --config specs/current-packages.json --best-effort
 ```
 
 ## Up-to-date skipping
 
 Installed state is stored directly on each installed binary as an extended attribute:
 
-- Linux: `user.my-installer`
-- macOS: `com.jpambrun.my-installer`
+- Linux: `user.binup`
+- macOS: `com.jpambrun.binup`
 
 A binary is skipped when all of these match:
 
@@ -142,13 +143,13 @@ A binary is skipped when all of these match:
 Inspect state on Linux:
 
 ```nu
-getfattr --only-values -n user.my-installer ~/bin/fd
+getfattr --only-values -n user.binup ~/bin/fd
 ```
 
 Inspect state on macOS:
 
 ```nu
-xattr -p com.jpambrun.my-installer ~/bin/fd
+xattr -p com.jpambrun.binup ~/bin/fd
 ```
 
 There is no separate state file or installer lock.
@@ -156,10 +157,10 @@ There is no separate state file or installer lock.
 ## Tests
 
 ```nu
-bun test installer.spec.ts
+bun test binup.spec.ts
 ```
 
-The tests do not call GitHub. `installer.spec.ts` contains captured release asset metadata for the current package list and tests artifact selection for:
+The tests do not call GitHub. `binup.spec.ts` contains captured release asset metadata for the current package list and tests artifact selection for:
 
 - `linux-x64`
 - `linux-arm64`
