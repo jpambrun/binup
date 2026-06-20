@@ -12,7 +12,7 @@ A Bun-based GitHub release binary installer to replace `~/bin/install.sh` and gl
   - concurrency limits
   - platform/architecture matching
   - ignored artifact types such as checksums, signatures, SBOMs, `.deb`, `.rpm`, etc.
-- State is stored as JSON.
+- Installed state is stored on each binary as an extended attribute.
 - Release checks and downloads run in parallel with `p-map`.
 - Tests are offline and use captured GitHub release asset fixtures.
 
@@ -30,6 +30,8 @@ plan.html                    # implementation/review plan
 ```nu
 bun install
 ```
+
+Runtime state uses extended attributes, so Linux needs `getfattr` and `setfattr` available; macOS needs `xattr`.
 
 ## Config shape
 
@@ -101,7 +103,6 @@ Test with `/tmp/bin` instead of `~/bin`:
 
 ```nu
 $env.MY_INSTALLER_BIN_DIR = "/tmp/bin"
-$env.MY_INSTALLER_STATE_DIR = "/tmp/my-installer-state"
 bun installer.ts --config specs/current-packages.json
 ```
 
@@ -124,11 +125,10 @@ bun installer.ts --config specs/current-packages.json --best-effort
 
 ## Up-to-date skipping
 
-Installed state is stored at:
+Installed state is stored directly on each installed binary as an extended attribute:
 
-```text
-~/.local/state/my-installer/installed.json
-```
+- Linux: `user.my-installer`
+- macOS: `com.jpambrun.my-installer`
 
 A binary is skipped when all of these match:
 
@@ -137,10 +137,21 @@ A binary is skipped when all of these match:
 - GitHub asset name
 - GitHub asset size
 - executable exists at `~/bin/<binary>`
+- metadata extended attribute exists and matches
 
-If the state file is deleted, the installer downloads once and recreates it.
+Inspect state on Linux:
 
-Successful installs are written to state even when another concurrent install fails, so reruns do not redownload already-installed tools.
+```nu
+getfattr --only-values -n user.my-installer ~/bin/fd
+```
+
+Inspect state on macOS:
+
+```nu
+xattr -p com.jpambrun.my-installer ~/bin/fd
+```
+
+There is no separate state file or installer lock.
 
 ## Tests
 

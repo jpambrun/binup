@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { binariesOf, candidateTags, choosePlatformMatch, normalizeConfig, normalizePlatform, selectAsset, type ConfigFile, type PackageSpec, type Release } from "./installer";
+import { binariesOf, candidateTags, choosePlatformMatch, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, type ConfigFile, type PackageSpec, type Release } from "./installer";
 
 type Fixture = { pkg: PackageSpec; release: Release; expected: Record<string, Record<string, string | null>> };
 
@@ -6307,10 +6307,10 @@ const FIXTURES = [
     },
     "expected": {
       "linux-x64": {
-        "duckdb": "duckdb_cli-linux-amd64-musl.zip"
+        "duckdb": "duckdb_cli-linux-amd64.zip"
       },
       "linux-arm64": {
-        "duckdb": "duckdb_cli-linux-arm64-musl.zip"
+        "duckdb": "duckdb_cli-linux-arm64.zip"
       },
       "darwin-x64": {
         "duckdb": "duckdb_cli-osx-amd64.zip"
@@ -7742,7 +7742,7 @@ const FIXTURES = [
     },
     "expected": {
       "linux-x64": {
-        "exa": "exa-linux-x86_64-musl-v0.10.1.zip"
+        "exa": "exa-linux-x86_64-v0.10.1.zip"
       },
       "linux-arm64": {
         "exa": null
@@ -9456,10 +9456,10 @@ const FIXTURES = [
     },
     "expected": {
       "linux-x64": {
-        "bun": "bun-linux-x64-musl.zip"
+        "bun": "bun-linux-x64.zip"
       },
       "linux-arm64": {
-        "bun": "bun-linux-aarch64-musl.zip"
+        "bun": "bun-linux-aarch64.zip"
       },
       "darwin-x64": {
         "bun": "bun-darwin-x64.zip"
@@ -9666,10 +9666,10 @@ const FIXTURES = [
     },
     "expected": {
       "linux-x64": {
-        "pnpm": "pnpm-linux-x64-musl.tar.gz"
+        "pnpm": "pnpm-linux-x64.tar.gz"
       },
       "linux-arm64": {
-        "pnpm": "pnpm-linux-arm64-musl.tar.gz"
+        "pnpm": "pnpm-linux-arm64.tar.gz"
       },
       "darwin-x64": {
         "pnpm": null
@@ -10893,10 +10893,10 @@ const FIXTURES = [
     },
     "expected": {
       "linux-x64": {
-        "opencode": "opencode-linux-x64-musl.tar.gz"
+        "opencode": "opencode-linux-x64.tar.gz"
       },
       "linux-arm64": {
-        "opencode": "opencode-linux-arm64-musl.tar.gz"
+        "opencode": "opencode-linux-arm64.tar.gz"
       },
       "darwin-x64": {
         "opencode": "opencode-darwin-x64.zip"
@@ -14022,5 +14022,19 @@ describe("archive binary disambiguation", () => {
 
   test("does not choose linux binaries for darwin x64", () => {
     expect(choosePlatformMatch(brootPaths, normalizePlatform("darwin-x64"))).toBeUndefined();
+  });
+});
+
+describe("archive path safety", () => {
+  test("allows normal relative archive paths", () => {
+    expect(isSafeArchivePath("tool/bin/tool")).toBe(true);
+    expect(isSafeArchivePath("x86_64-unknown-linux-gnu/broot")).toBe(true);
+  });
+
+  test("rejects absolute, parent, and windows drive paths", () => {
+    expect(isSafeArchivePath("/tmp/evil")).toBe(false);
+    expect(isSafeArchivePath("../evil")).toBe(false);
+    expect(isSafeArchivePath("tool/../../evil")).toBe(false);
+    expect(isSafeArchivePath("C:\\evil\\tool.exe")).toBe(false);
   });
 });

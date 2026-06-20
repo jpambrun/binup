@@ -1,14 +1,12 @@
 import pMap from "p-map";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 const INSTALL_DIR = process.env.MY_INSTALLER_BIN_DIR ?? join(homedir(), "bin");
-const STATE_DIR = process.env.MY_INSTALLER_STATE_DIR ?? join(homedir(), ".local/state/my-installer");
-const STATE_FILE = join(STATE_DIR, "installed.json");
-const LOCK_DIR = join(STATE_DIR, "lock");
+const XATTR_NAME = process.platform === "darwin" ? "com.jpambrun.my-installer" : "user.my-installer";
 const CHECK_CONCURRENCY = 12;
 const DOWNLOAD_CONCURRENCY = 4;
 const GITHUB_API = "https://api.github.com";
@@ -73,15 +71,12 @@ type InstalledRecord = {
   installedAt: string;
   sha256?: string;
 };
-type State = Record<string, InstalledRecord>;
-
 type Plan = {
   pkg: PackageSpec;
   binary: BinarySpec;
   release: Release;
   selected: SelectedAsset;
   platform: Platform;
-  stateKey: string;
   installedPath: string;
   upToDate: boolean;
 };
@@ -213,6 +208,8 @@ function scoreAsset(asset: ReleaseAsset, platform: Platform, hint?: string, bina
   }
   if (name.includes("profile")) score -= 20;
   if (name.includes("baseline")) score -= 5;
+  if (platform.os === "linux" && name.includes("musl")) score -= 4;
+  if (platform.os === "linux" && name.includes("gnu")) score += 2;
 
   if (name.endsWith(".tar.gz")) score += 8;
   else if (name.endsWith(".tgz")) score += 7;
@@ -340,39 +337,40 @@ async function fetchRelease(pkg: PackageSpec, token: string, platform: Platform)
   throw new Error(`No release found for ${pkg.repo} (${errors.join("; ")})`);
 }
 
-async function readState(): Promise<State> {
+async function commandExists(command: string): Promise<boolean> {
+  const proc = Bun.spawn(["sh", "-c", `command -v ${command} >/dev/null 2>&1`], { stdout: "pipe", stderr: "pipe" });
+  return (await proc.exited) === 0;
+}
+
+async function ensureXattrTools(): Promise<void> {
+  const commands = process.platform === "darwin" ? ["xattr"] : ["getfattr", "setfattr"];
+  const missing = [];
+  for (const command of commands) if (!(await commandExists(command))) missing.push(command);
+  if (missing.length > 0) throw new Error(`Missing required xattr tool(s): ${missing.join(", ")}`);
+}
+
+async function readInstalledRecord(path: string): Promise<InstalledRecord | undefined> {
   try {
-    return JSON.parse(await readFile(STATE_FILE, "utf8")) as State;
+    await access(path);
+    const command = process.platform === "darwin" ? ["xattr", "-p", XATTR_NAME, path] : ["getfattr", "--only-values", "-n", XATTR_NAME, path];
+    const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    if (exitCode !== 0) return undefined;
+    try {
+      return JSON.parse(stdout) as InstalledRecord;
+    } catch {
+      return undefined;
+    }
   } catch (error: any) {
-    if (error?.code === "ENOENT") return {};
+    if (error?.code === "ENOENT") return undefined;
     throw error;
   }
 }
 
-async function writeState(state: State): Promise<void> {
-  await mkdir(STATE_DIR, { recursive: true });
-  const tmp = `${STATE_FILE}.tmp-${process.pid}`;
-  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`);
-  await rename(tmp, STATE_FILE);
-}
-
-async function withLock<T>(fn: () => Promise<T>): Promise<T> {
-  await mkdir(STATE_DIR, { recursive: true });
-  try {
-    await mkdir(LOCK_DIR);
-  } catch (error: any) {
-    if (error?.code === "EEXIST") throw new Error(`Another installer run is active (${LOCK_DIR})`);
-    throw error;
-  }
-  try {
-    return await fn();
-  } finally {
-    await rm(LOCK_DIR, { recursive: true, force: true });
-  }
-}
-
-function stateKey(pkg: PackageSpec, binary: BinarySpec, platform: Platform): string {
-  return `${pkg.repo}:${binary.name}:${platform.os}:${platform.arch}`;
+async function writeInstalledRecord(path: string, record: InstalledRecord): Promise<void> {
+  const value = JSON.stringify(record);
+  const command = process.platform === "darwin" ? ["xattr", "-w", XATTR_NAME, value, path] : ["setfattr", "-n", XATTR_NAME, "-v", value, path];
+  await run(command);
 }
 
 async function isExecutable(path: string): Promise<boolean> {
@@ -384,8 +382,13 @@ async function isExecutable(path: string): Promise<boolean> {
   }
 }
 
-async function isUpToDate(record: InstalledRecord | undefined, plan: Omit<Plan, "upToDate">): Promise<boolean> {
+async function isUpToDate(plan: Omit<Plan, "upToDate">): Promise<boolean> {
+  const record = await readInstalledRecord(plan.installedPath);
   if (!record) return false;
+  if (record.repo !== plan.pkg.repo) return false;
+  if (record.binary !== plan.binary.name) return false;
+  if (record.os !== plan.platform.os) return false;
+  if (record.arch !== plan.platform.arch) return false;
   if (record.releaseTag !== plan.release.tag_name) return false;
   if (record.assetId !== plan.selected.asset.id) return false;
   if (record.assetName !== plan.selected.asset.name) return false;
@@ -393,7 +396,7 @@ async function isUpToDate(record: InstalledRecord | undefined, plan: Omit<Plan, 
   return isExecutable(plan.installedPath);
 }
 
-async function buildPlans(config: Config, token: string, platform: Platform, state: State): Promise<BuildPlansResult> {
+async function buildPlans(config: Config, token: string, platform: Platform): Promise<BuildPlansResult> {
   const packageResults = await pMap(
     config.packages,
     async (pkg): Promise<{ plans: Plan[]; errors: string[] }> => {
@@ -405,8 +408,8 @@ async function buildPlans(config: Config, token: string, platform: Platform, sta
             const selected = selectAsset(pkg, release, platform, binary.name);
             if (!selected) throw new Error(`No ${platform.os}-${platform.arch} asset found in ${release.tag_name}`);
             const installedPath = join(INSTALL_DIR, binary.name);
-            const base = { pkg, binary, release, selected, platform, stateKey: stateKey(pkg, binary, platform), installedPath };
-            return { ...base, upToDate: await isUpToDate(state[base.stateKey], base) };
+            const base = { pkg, binary, release, selected, platform, installedPath };
+            return { ...base, upToDate: await isUpToDate(base) };
           },
           { concurrency: 4 },
         );
@@ -430,11 +433,11 @@ async function downloadAndInstall(plan: Plan): Promise<InstalledRecord> {
     await download(plan.selected.asset.browser_download_url, assetPath);
     const sourcePath = await extractAndFindBinary(assetPath, workDir, plan.selected.asset.name, plan.binary, plan.platform);
     await mkdir(INSTALL_DIR, { recursive: true });
-    const tmpTarget = join(INSTALL_DIR, `.${plan.binary.name}.tmp-${process.pid}`);
+    const tmpTarget = join(INSTALL_DIR, `.${plan.binary.name}.tmp-${process.pid}-${plan.selected.asset.id}-${randomUUID()}`);
     await copyFile(sourcePath, tmpTarget);
     await chmod(tmpTarget, 0o755);
     await rename(tmpTarget, plan.installedPath);
-    return {
+    const record = {
       repo: plan.pkg.repo,
       binary: plan.binary.name,
       os: plan.platform.os,
@@ -446,7 +449,13 @@ async function downloadAndInstall(plan: Plan): Promise<InstalledRecord> {
       installedPath: plan.installedPath,
       installedAt: new Date().toISOString(),
       sha256: await sha256(plan.installedPath),
-    };
+    } satisfies InstalledRecord;
+    try {
+      await writeInstalledRecord(plan.installedPath, record);
+    } catch (error) {
+      throw new Error(`Installed ${plan.installedPath} but failed to write ${XATTR_NAME} metadata: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return record;
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
@@ -462,9 +471,16 @@ async function extractAndFindBinary(assetPath: string, workDir: string, assetNam
   const lower = assetName.toLowerCase();
   const extractDir = join(workDir, "extract");
   await mkdir(extractDir, { recursive: true });
-  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) await run(["tar", "-xzf", assetPath, "-C", extractDir]);
-  else if (lower.endsWith(".tar.xz")) await run(["tar", "-xJf", assetPath, "-C", extractDir]);
-  else if (lower.endsWith(".zip")) await run(["unzip", "-q", assetPath, "-d", extractDir]);
+  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
+    await assertSafeArchiveEntries(await runOutput(["tar", "-tzf", assetPath]), assetName);
+    await run(["tar", "-xzf", assetPath, "-C", extractDir]);
+  } else if (lower.endsWith(".tar.xz")) {
+    await assertSafeArchiveEntries(await runOutput(["tar", "-tJf", assetPath]), assetName);
+    await run(["tar", "-xJf", assetPath, "-C", extractDir]);
+  } else if (lower.endsWith(".zip")) {
+    await assertSafeArchiveEntries(await runOutput(["unzip", "-Z1", assetPath]), assetName);
+    await run(["unzip", "-q", assetPath, "-d", extractDir]);
+  }
   else {
     const raw = join(extractDir, basename(assetName));
     await copyFile(assetPath, raw);
@@ -526,10 +542,26 @@ async function walk(dir: string): Promise<string[]> {
   return files.flat();
 }
 
-async function run(command: string[]): Promise<void> {
+export function isSafeArchivePath(path: string): boolean {
+  if (!path || path.startsWith("/") || path.startsWith("\\\\")) return false;
+  if (/^[A-Za-z]:/.test(path)) return false;
+  return !path.split(/[\\/]+/).some((part) => part === "..");
+}
+
+async function assertSafeArchiveEntries(output: string, assetName: string): Promise<void> {
+  const unsafe = output.split(/\r?\n/).filter(Boolean).filter((entry) => !isSafeArchivePath(entry));
+  if (unsafe.length > 0) throw new Error(`Unsafe paths in ${assetName}: ${unsafe.slice(0, 5).join(", ")}`);
+}
+
+async function runOutput(command: string[]): Promise<string> {
   const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
-  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   if (exitCode !== 0) throw new Error(`${command.join(" ")} failed: ${stderr.trim()}`);
+  return stdout;
+}
+
+async function run(command: string[]): Promise<void> {
+  await runOutput(command);
 }
 
 async function sha256(path: string): Promise<string> {
@@ -595,8 +627,8 @@ async function addPackage(configPath: string, config: Config, token: string, arg
 }
 
 async function installConfig(config: Config, args: Args, token: string): Promise<void> {
-  const state = await readState();
-  const { plans, errors } = await buildPlans(config, token, args.platform, state);
+  await ensureXattrTools();
+  const { plans, errors } = await buildPlans(config, token, args.platform);
   const current = plans.filter((plan) => plan.upToDate);
   const pending = plans.filter((plan) => !plan.upToDate);
   for (const plan of plans) {
@@ -609,28 +641,21 @@ async function installConfig(config: Config, args: Args, token: string): Promise
   if (args.resolveOnly || args.dryRun || pending.length === 0) return;
   if (errors.length > 0 && !args.bestEffort) throw new Error(`Refusing to install with ${errors.length} unresolved package(s). Re-run with --best-effort to install the resolved packages only.`);
 
-  await withLock(async () => {
-    const results = await pMap(
-      pending,
-      async (plan) => {
-        try {
-          const record = await downloadAndInstall(plan);
-          console.log(`installed     ${plan.pkg.repo} -> ${plan.binary.name}`);
-          return { key: plan.stateKey, record };
-        } catch (error) {
-          return { error: `${plan.pkg.repo} -> ${plan.binary.name}: ${error instanceof Error ? error.message : String(error)}` };
-        }
-      },
-      { concurrency: DOWNLOAD_CONCURRENCY },
-    );
-    const installErrors = [];
-    for (const result of results) {
-      if ("error" in result) installErrors.push(result.error);
-      else state[result.key] = result.record;
-    }
-    await writeState(state);
-    if (installErrors.length > 0) throw new Error(`Failed to install ${installErrors.length} package(s):\n${installErrors.join("\n")}`);
-  });
+  const results = await pMap(
+    pending,
+    async (plan) => {
+      try {
+        await downloadAndInstall(plan);
+        console.log(`installed     ${plan.pkg.repo} -> ${plan.binary.name}`);
+        return undefined;
+      } catch (error) {
+        return `${plan.pkg.repo} -> ${plan.binary.name}: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+    { concurrency: DOWNLOAD_CONCURRENCY },
+  );
+  const installErrors = results.filter((result): result is string => result !== undefined);
+  if (installErrors.length > 0) throw new Error(`Failed to install ${installErrors.length} package(s):\n${installErrors.join("\n")}`);
 }
 
 async function main(): Promise<void> {
