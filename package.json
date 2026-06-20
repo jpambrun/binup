@@ -1,4 +1,11 @@
 {
+  "name": "binup",
+  "version": "0.1.0",
+  "description": "GitHub binary installer.",
+  "type": "module",
+  "bin": {
+    "binup": "./binup.cjs"
+  },
   "dependencies": {
     "p-map": "^7.0.4"
   }

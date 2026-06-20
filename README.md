@@ -80,6 +80,12 @@ Install into the default location, `~/bin`:
 bun binup.ts
 ```
 
+Use directly from this repo with `bun x` (Bun currently needs an explicit ref):
+
+```nu
+bun x github:jpambrun/binup#main update
+```
+
 Update configured packages to their latest GitHub releases:
 
 ```nu
