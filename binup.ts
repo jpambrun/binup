@@ -1,7 +1,7 @@
 import pMap from "p-map";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -101,7 +101,9 @@ const OTHER_ARCH_TOKENS: Record<Arch, string[]> = {
 
 export function normalizePlatform(input = `${process.platform}-${process.arch}`): Platform {
   const value = input.toLowerCase().replace("macos", "darwin");
-  const [rawOs, rawArch] = value.split(/[-_/]/);
+  const match = value.match(/^(linux|darwin)[-_/](.+)$/);
+  const rawOs = match?.[1];
+  const rawArch = match?.[2];
   const os = rawOs === "darwin" ? "darwin" : rawOs === "linux" ? "linux" : undefined;
   const arch = rawArch === "x64" || rawArch === "amd64" || rawArch === "x86_64" ? "x64" : rawArch === "arm64" || rawArch === "aarch64" ? "arm64" : undefined;
   if (!os || !arch) throw new Error(`Unsupported platform: ${input}`);
@@ -277,11 +279,12 @@ async function loadConfig(path: string): Promise<Config> {
   return normalizeConfig(JSON.parse(await readFile(path, "utf8")) as ConfigFile);
 }
 
-function simplifyPackage(pkg: PackageSpec): PackageConfig {
+export function simplifyPackage(pkg: PackageSpec): PackageConfig {
   const binary = pkg.binaries?.[0];
   const entry: Exclude<PackageConfig, string> = { repo: pkg.repo };
   if (pkg.version && pkg.version !== "latest") entry.version = pkg.version;
-  if (binary && binary.name !== defaultBinaryName(pkg.repo)) entry.name = binary.name;
+  if (pkg.binaries && pkg.binaries.length > 1) entry.binaries = pkg.binaries;
+  else if (binary && binary.name !== defaultBinaryName(pkg.repo)) entry.name = binary.name;
   if (binary?.path) entry.path = binary.path;
   if (pkg.assetHints?.select) entry.select = pkg.assetHints.select;
   return Object.keys(entry).length === 1 ? pkg.repo : entry;
@@ -467,7 +470,7 @@ async function download(url: string, dest: string): Promise<void> {
   await writeFile(dest, response.body as any);
 }
 
-async function extractAndFindBinary(assetPath: string, workDir: string, assetName: string, binary: BinarySpec, platform: Platform): Promise<string> {
+export async function extractAndFindBinary(assetPath: string, workDir: string, assetName: string, binary: BinarySpec, platform: Platform): Promise<string> {
   const lower = assetName.toLowerCase();
   const extractDir = join(workDir, "extract");
   await mkdir(extractDir, { recursive: true });
@@ -489,6 +492,7 @@ async function extractAndFindBinary(assetPath: string, workDir: string, assetNam
 
   if (binary.path) {
     const explicitPath = join(extractDir, binary.path);
+    await rejectSymlink(explicitPath, assetName);
     await access(explicitPath);
     return explicitPath;
   }
@@ -536,10 +540,15 @@ async function walk(dir: string): Promise<string[]> {
   const files = await Promise.all(
     entries.map(async (entry) => {
       const path = join(dir, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`Unsupported symlink in archive: ${path}`);
       return entry.isDirectory() ? walk(path) : [path];
     }),
   );
   return files.flat();
+}
+
+async function rejectSymlink(path: string, assetName: string): Promise<void> {
+  if ((await lstat(path)).isSymbolicLink()) throw new Error(`Unsupported symlink in ${assetName}: ${path}`);
 }
 
 export function isSafeArchivePath(path: string): boolean {

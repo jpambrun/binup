@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { binariesOf, candidateTags, choosePlatformMatch, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, type ConfigFile, type PackageSpec, type Release } from "./binup";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { binariesOf, candidateTags, choosePlatformMatch, extractAndFindBinary, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, simplifyPackage, type ConfigFile, type PackageSpec, type Release } from "./binup";
 
 type Fixture = { pkg: PackageSpec; release: Release; expected: Record<string, Record<string, string | null>> };
 
@@ -13975,6 +13978,11 @@ describe("artifact exclusion rules", () => {
 });
 
 describe("simple package config rules", () => {
+  test("accepts underscore architecture aliases", () => {
+    expect(normalizePlatform("linux-x86_64")).toEqual({ os: "linux", arch: "x64" });
+    expect(normalizePlatform("darwin-aarch64")).toEqual({ os: "darwin", arch: "arm64" });
+  });
+
   test("normalizes string and compact object entries", () => {
     const config = normalizeConfig({
       packages: [
@@ -13984,6 +13992,13 @@ describe("simple package config rules", () => {
     } satisfies ConfigFile);
     expect(config.packages[0]).toEqual({ repo: "sharkdp/fd" });
     expect(config.packages[1]).toEqual({ repo: "BurntSushi/ripgrep", binaries: [{ name: "rg" }], assetHints: { select: "x86_64-unknown-linux" } });
+  });
+
+  test("preserves multi-binary package entries when simplifying", () => {
+    expect(simplifyPackage({ repo: "owner/tool", binaries: [{ name: "tool" }, { name: "tool-helper", path: "bin/helper" }] })).toEqual({
+      repo: "owner/tool",
+      binaries: [{ name: "tool" }, { name: "tool-helper", path: "bin/helper" }],
+    });
   });
 
   test("fixtures do not carry old schema fields", () => {
@@ -14036,5 +14051,23 @@ describe("archive path safety", () => {
     expect(isSafeArchivePath("../evil")).toBe(false);
     expect(isSafeArchivePath("tool/../../evil")).toBe(false);
     expect(isSafeArchivePath("C:\\evil\\tool.exe")).toBe(false);
+  });
+
+  test("rejects symlinked binaries in archives", async () => {
+    const workDir = await mkdtemp(join(tmpdir(), "binup-spec-"));
+    try {
+      const sourceDir = join(workDir, "source");
+      const assetPath = join(workDir, "tool.tar.gz");
+      await mkdir(sourceDir);
+      const target = join(sourceDir, "target");
+      await writeFile(target, "#!/bin/sh\n");
+      await chmod(target, 0o755);
+      await symlink(target, join(sourceDir, "tool"));
+      const proc = Bun.spawnSync(["tar", "-czf", assetPath, "-C", sourceDir, "tool"]);
+      expect(proc.exitCode).toBe(0);
+      await expect(extractAndFindBinary(assetPath, workDir, "tool.tar.gz", { name: "tool" }, normalizePlatform("linux-x64"))).rejects.toThrow("Unsupported symlink");
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
   });
 });
