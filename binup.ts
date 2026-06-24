@@ -613,17 +613,11 @@ async function updateConfigVersions(configPath: string, config: Config, token: s
       errors.push(`${result.pkg.repo}: ${result.error}`);
       continue;
     }
-    if (result.trackingLatest) {
-      console.log(`current       ${result.pkg.repo} (latest)`);
-      continue;
+    if (result.changed) {
+      changed = true;
+      console.log(`updated       ${result.pkg.repo} ${result.oldVersion} -> ${result.latest.tag_name}`);
+      console.log(`release       ${releaseUrl(result.pkg.repo, result.latest.tag_name)}`);
     }
-    if (!result.changed) {
-      console.log(`current       ${result.pkg.repo} ${result.latest.tag_name}`);
-      continue;
-    }
-    changed = true;
-    console.log(`updated       ${result.pkg.repo} ${result.oldVersion} -> ${result.latest.tag_name}`);
-    console.log(`release       ${releaseUrl(result.pkg.repo, result.latest.tag_name)}`);
   }
   if (selectedRepos) {
     for (const repo of selectedRepos) {
