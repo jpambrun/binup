@@ -14070,4 +14070,23 @@ describe("archive path safety", () => {
       await rm(workDir, { recursive: true, force: true });
     }
   });
+
+  test("ignores unrelated symlinks in archives", async () => {
+    const workDir = await mkdtemp(join(tmpdir(), "binup-spec-"));
+    try {
+      const sourceDir = join(workDir, "source");
+      const binDir = join(sourceDir, "dist", "node_modules", ".bin");
+      const assetPath = join(workDir, "tool.tar.gz");
+      await mkdir(binDir, { recursive: true });
+      const tool = join(sourceDir, "tool");
+      await writeFile(tool, "#!/bin/sh\n");
+      await chmod(tool, 0o755);
+      await symlink("../which/bin/which", join(binDir, "node-which"));
+      const proc = Bun.spawnSync(["tar", "-czf", assetPath, "-C", sourceDir, "."]);
+      expect(proc.exitCode).toBe(0);
+      expect(await extractAndFindBinary(assetPath, workDir, "tool.tar.gz", { name: "tool" }, normalizePlatform("linux-x64"))).toEndWith("/tool");
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
 });

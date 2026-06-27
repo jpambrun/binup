@@ -496,7 +496,9 @@ export async function extractAndFindBinary(assetPath: string, workDir: string, a
     await access(explicitPath);
     return explicitPath;
   }
-  const matches = (await walk(extractDir)).filter((path) => basename(path) === binary.name);
+  const walked = await walk(extractDir, binary.name);
+  const files = walked.files;
+  const matches = files.filter((path) => basename(path) === binary.name);
   if (matches.length === 1) return matches[0];
   const executableMatches = [];
   for (const match of matches) if (await isExecutable(match)) executableMatches.push(match);
@@ -504,8 +506,8 @@ export async function extractAndFindBinary(assetPath: string, workDir: string, a
   const platformMatch = choosePlatformMatch(executableMatches.length ? executableMatches : matches, platform);
   if (platformMatch) return platformMatch;
   if (matches.length > 1) throw new Error(`Ambiguous binary ${binary.name} in ${assetName}: ${matches.join(", ")}`);
+  if (walked.binarySymlinks.length > 0) throw new Error(`Unsupported symlink in archive: ${walked.binarySymlinks[0]}`);
 
-  const files = await walk(extractDir);
   const executableFiles = [];
   for (const file of files) if (await isExecutable(file)) executableFiles.push(file);
   if (executableFiles.length === 1) return executableFiles[0];
@@ -535,16 +537,20 @@ export function choosePlatformMatch(paths: string[], platform: Platform): string
   if (scored.length === 1 || scored[0].score > scored[1].score) return scored[0].path;
 }
 
-async function walk(dir: string): Promise<string[]> {
+async function walk(dir: string, binaryName?: string): Promise<{ files: string[]; binarySymlinks: string[] }> {
   const entries = await readdir(dir, { withFileTypes: true });
-  const files = await Promise.all(
+  const results = await Promise.all(
     entries.map(async (entry) => {
       const path = join(dir, entry.name);
-      if (entry.isSymbolicLink()) throw new Error(`Unsupported symlink in archive: ${path}`);
-      return entry.isDirectory() ? walk(path) : [path];
+      if (entry.isSymbolicLink()) return { files: [], binarySymlinks: entry.name === binaryName ? [path] : [] };
+      if (entry.isDirectory()) return walk(path, binaryName);
+      return { files: [path], binarySymlinks: [] };
     }),
   );
-  return files.flat();
+  return {
+    files: results.flatMap((result) => result.files),
+    binarySymlinks: results.flatMap((result) => result.binarySymlinks),
+  };
 }
 
 async function rejectSymlink(path: string, assetName: string): Promise<void> {
