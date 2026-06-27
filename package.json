@@ -4,9 +4,6 @@
   "description": "GitHub binary installer.",
   "type": "module",
   "bin": {
-    "binup": "./binup.cjs"
-  },
-  "dependencies": {
-    "p-map": "^7.0.4"
+    "binup": "./binup.ts"
   }
 }

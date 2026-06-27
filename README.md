@@ -1,6 +1,8 @@
 # binup
 
-A Bun-based GitHub release binary installer to replace `~/bin/install.sh` and global aqua usage. It only installs binaries published as GitHub release assets.
+A single-file Deno GitHub release binary installer to replace `~/bin/install.sh`
+and global aqua usage. It only installs binaries published as GitHub release
+assets.
 
 ## Design
 
@@ -11,28 +13,27 @@ A Bun-based GitHub release binary installer to replace `~/bin/install.sh` and gl
   - GitHub API URL
   - concurrency limits
   - platform/architecture matching
-  - ignored artifact types such as checksums, signatures, SBOMs, `.deb`, `.rpm`, etc.
+  - ignored artifact types such as checksums, signatures, SBOMs, `.deb`, `.rpm`,
+    etc.
 - Installed state is stored on each binary as an extended attribute.
-- Release checks and downloads run in parallel with `p-map`.
+- Release checks and downloads run in parallel with a tiny built-in mapper.
 - Tests are offline and use captured GitHub release asset fixtures.
 
 ## Files
 
 ```text
-binup.ts                      # binup implementation
+binup.ts                      # executable single-file implementation
 binup.spec.ts                 # offline artifact-selection tests
+deno.json                     # local dev tasks, not required to run binup.ts
 ~/.config/binup/packages.json # default editable config
-specs/current-packages.json   # test fixture generated from current tools
-plan.html                     # implementation/review plan
 ```
 
-## Install dependencies
+## Requirements
 
-```nu
-bun install
-```
+No project dependencies are required; run the script directly with Deno.
 
-Runtime state uses extended attributes, so Linux needs `getfattr` and `setfattr` available; macOS needs `xattr`.
+Runtime state uses extended attributes, so Linux needs `getfattr` and `setfattr`
+available; macOS needs `xattr`.
 
 ## Config shape
 
@@ -46,51 +47,57 @@ Use a string when the binary name is the repo name and latest is OK:
 }
 ```
 
-Use an object only when you need a version, binary rename, binary path, or asset select hint. Version can be omitted (equivalent to `"latest"`) to always track head:
+Use an object only when you need a version, binary rename, binary path, or asset
+select hint. Version can be omitted (equivalent to `"latest"`) to always track
+head:
 
 ```json
 {
   "packages": [
     { "repo": "sharkdp/fd", "version": "v10.4.2" },
     { "repo": "BurntSushi/ripgrep", "name": "rg" },
-    { "repo": "Ataraxy-Labs/weave", "name": "weave-driver", "select": "weave-driver" }
+    {
+      "repo": "Ataraxy-Labs/weave",
+      "name": "weave-driver",
+      "select": "weave-driver"
+    }
   ]
 }
 ```
 
-Supported object fields: `repo`, `version`, `name`, `path`, `select`.
-`version` may be omitted or set to `"latest"` to track the newest release.
+Supported object fields: `repo`, `version`, `name`, `path`, `select`. `version`
+may be omitted or set to `"latest"` to track the newest release.
 
 ## Usage
 
 Resolve only:
 
 ```nu
-bun binup.ts --resolve-only
+./binup.ts --resolve-only
 ```
 
 Dry run:
 
 ```nu
-bun binup.ts --dry-run
+./binup.ts --dry-run
 ```
 
 Install into the default location, `~/bin`:
 
 ```nu
-bun binup.ts
+./binup.ts
 ```
 
-Use directly from this repo with `bun x` (Bun currently needs an explicit ref):
+Run without the executable bit if needed:
 
 ```nu
-bun x github:jpambrun/binup#main update
+deno run --allow-env --allow-read --allow-write --allow-run --allow-net binup.ts update
 ```
 
 Update configured packages to their latest GitHub releases:
 
 ```nu
-bun binup.ts update
+./binup.ts update
 ```
 
 Updating prints the GitHub release link for each changed package.
@@ -98,42 +105,45 @@ Updating prints the GitHub release link for each changed package.
 Add a new GitHub package, write it to the config, and install it:
 
 ```nu
-bun binup.ts add sharkdp/hyperfine
+./binup.ts add sharkdp/hyperfine
 ```
 
 If the binary name is not the repository name, provide it explicitly:
 
 ```nu
-bun binup.ts add BurntSushi/ripgrep --binary rg
+./binup.ts add BurntSushi/ripgrep --binary rg
 ```
 
 Test with `/tmp/bin` instead of `~/bin`:
 
 ```nu
 $env.BINUP_BIN_DIR = "/tmp/bin"
-bun binup.ts --config specs/current-packages.json
+./binup.ts --config specs/current-packages.json
 ```
 
 Target another platform for resolution tests:
 
 ```nu
-bun binup.ts --config specs/current-packages.json --platform linux-x64 --resolve-only
-bun binup.ts --config specs/current-packages.json --platform linux-arm64 --resolve-only
-bun binup.ts --config specs/current-packages.json --platform darwin-x64 --resolve-only
-bun binup.ts --config specs/current-packages.json --platform darwin-arm64 --resolve-only
+./binup.ts --config specs/current-packages.json --platform linux-x64 --resolve-only
+./binup.ts --config specs/current-packages.json --platform linux-arm64 --resolve-only
+./binup.ts --config specs/current-packages.json --platform darwin-x64 --resolve-only
+./binup.ts --config specs/current-packages.json --platform darwin-arm64 --resolve-only
 ```
 
-`--resolve-only` reports unresolved packages as warnings and exits successfully so the whole spec can be reviewed.
+`--resolve-only` reports unresolved packages as warnings and exits successfully
+so the whole spec can be reviewed.
 
-Use best-effort mode when installing to continue if some packages have no matching GitHub asset:
+Use best-effort mode when installing to continue if some packages have no
+matching GitHub asset:
 
 ```nu
-bun binup.ts --config specs/current-packages.json --best-effort
+./binup.ts --config specs/current-packages.json --best-effort
 ```
 
 ## Up-to-date skipping
 
-Installed state is stored directly on each installed binary as an extended attribute:
+Installed state is stored directly on each installed binary as an extended
+attribute:
 
 - Linux: `user.binup`
 - macOS: `com.jpambrun.binup`
@@ -164,10 +174,11 @@ There is no separate state file or installer lock.
 ## Tests
 
 ```nu
-bun test binup.spec.ts
+deno test --allow-env --allow-read --allow-write --allow-run binup.spec.ts
 ```
 
-The tests do not call GitHub. `binup.spec.ts` contains captured release asset metadata for the current package list and tests artifact selection for:
+The tests do not call GitHub. `binup.spec.ts` contains captured release asset
+metadata for the current package list and tests artifact selection for:
 
 - `linux-x64`
 - `linux-arm64`
@@ -176,4 +187,6 @@ The tests do not call GitHub. `binup.spec.ts` contains captured release asset me
 
 ## GitHub-only scope
 
-Packages without matching GitHub release binary assets are reported as unresolved. This intentionally excludes tools that publish binaries only through npm, vendor download pages, or other non-GitHub locations.
+Packages without matching GitHub release binary assets are reported as
+unresolved. This intentionally excludes tools that publish binaries only through
+npm, vendor download pages, or other non-GitHub locations.

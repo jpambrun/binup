@@ -1,13 +1,39 @@
-import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { binariesOf, candidateTags, choosePlatformMatch, extractAndFindBinary, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, simplifyPackage, type ConfigFile, type PackageSpec, type Release } from "./binup";
+
+let currentSuite = "";
+function describe(name: string, fn: () => void): void {
+  const previousSuite = currentSuite;
+  currentSuite = previousSuite ? `${previousSuite} > ${name}` : name;
+  fn();
+  currentSuite = previousSuite;
+}
+
+function test(name: string, fn: () => void | Promise<void>): void {
+  Deno.test(currentSuite ? `${currentSuite} > ${name}` : name, fn);
+}
+
+function expect<T>(actual: T) {
+  return {
+    toBe: (expected: unknown) => assert.strictEqual(actual, expected),
+    toEqual: (expected: unknown) => assert.deepStrictEqual(actual, expected),
+    toHaveLength: (expected: number) => assert.strictEqual((actual as { length: number }).length, expected),
+    toContain: (expected: unknown) => assert.ok((actual as { includes: (value: unknown) => boolean }).includes(expected)),
+    toBeUndefined: () => assert.strictEqual(actual, undefined),
+    toEndWith: (expected: string) => assert.ok(String(actual).endsWith(expected)),
+    rejects: {
+      toThrow: async (message: string) => assert.rejects(actual as Promise<unknown>, new RegExp(message)),
+    },
+  };
+}
+import { binariesOf, candidateTags, choosePlatformMatch, extractAndFindBinary, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, simplifyPackage, type ConfigFile, type PackageSpec, type Release } from "./binup.ts";
 
 type Fixture = { pkg: PackageSpec; release: Release; expected: Record<string, Record<string, string | null>> };
 
 const PLATFORMS = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"] as const;
-const FIXTURES = [
+const FIXTURES: Fixture[] = [
   {
     "pkg": {
       "repo": "abiosoft/colima",
@@ -13925,7 +13951,7 @@ const FIXTURES = [
       }
     }
   }
-] satisfies Fixture[];
+];
 
 describe("artifact selection fixtures", () => {
   test("covers every current package entry", () => {
@@ -14063,8 +14089,8 @@ describe("archive path safety", () => {
       await writeFile(target, "#!/bin/sh\n");
       await chmod(target, 0o755);
       await symlink(target, join(sourceDir, "tool"));
-      const proc = Bun.spawnSync(["tar", "-czf", assetPath, "-C", sourceDir, "tool"]);
-      expect(proc.exitCode).toBe(0);
+      const proc = new Deno.Command("tar", { args: ["-czf", assetPath, "-C", sourceDir, "tool"] }).outputSync();
+      expect(proc.code).toBe(0);
       await expect(extractAndFindBinary(assetPath, workDir, "tool.tar.gz", { name: "tool" }, normalizePlatform("linux-x64"))).rejects.toThrow("Unsupported symlink");
     } finally {
       await rm(workDir, { recursive: true, force: true });
@@ -14082,8 +14108,8 @@ describe("archive path safety", () => {
       await writeFile(tool, "#!/bin/sh\n");
       await chmod(tool, 0o755);
       await symlink("../which/bin/which", join(binDir, "node-which"));
-      const proc = Bun.spawnSync(["tar", "-czf", assetPath, "-C", sourceDir, "."]);
-      expect(proc.exitCode).toBe(0);
+      const proc = new Deno.Command("tar", { args: ["-czf", assetPath, "-C", sourceDir, "."] }).outputSync();
+      expect(proc.code).toBe(0);
       expect(await extractAndFindBinary(assetPath, workDir, "tool.tar.gz", { name: "tool" }, normalizePlatform("linux-x64"))).toEndWith("/tool");
     } finally {
       await rm(workDir, { recursive: true, force: true });

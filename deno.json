@@ -1,0 +1,11 @@
+{
+  "nodeModulesDir": "none",
+  "fmt": {
+    "exclude": ["binup.spec.ts"]
+  },
+  "tasks": {
+    "test": "deno test --allow-env --allow-read --allow-write --allow-run binup.spec.ts",
+    "check": "deno check binup.ts binup.spec.ts",
+    "fmt": "deno fmt binup.ts README.md package.json deno.json"
+  }
+}
