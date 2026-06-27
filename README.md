@@ -133,12 +133,8 @@ Target another platform for resolution tests:
 `--resolve-only` reports unresolved packages as warnings and exits successfully
 so the whole spec can be reviewed.
 
-Use best-effort mode when installing to continue if some packages have no
-matching GitHub asset:
-
-```nu
-./binup.ts --config specs/current-packages.json --best-effort
-```
+Packages without a matching GitHub asset are skipped while resolved packages
+continue installing.
 
 ## Up-to-date skipping
 

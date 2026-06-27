@@ -109,7 +109,6 @@ type Args = {
   dryRun: boolean;
   resolveOnly: boolean;
   platform: Platform;
-  bestEffort: boolean;
   binary?: string;
   repos: string[];
 };
@@ -369,7 +368,6 @@ function parseArgs(argv: string[]): Args {
     dryRun: false,
     resolveOnly: false,
     platform: normalizePlatform(),
-    bestEffort: false,
     repos: [],
   };
   if (argv[0] === "install" || argv[0] === "update" || argv[0] === "add") {
@@ -380,7 +378,6 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--config") args.config = argv[++i];
     else if (arg === "--dry-run") args.dryRun = true;
     else if (arg === "--resolve-only") args.resolveOnly = true;
-    else if (arg === "--best-effort") args.bestEffort = true;
     else if (arg === "--platform") args.platform = normalizePlatform(argv[++i]);
     else if (arg === "--binary") args.binary = argv[++i];
     else if (arg === "--help" || arg === "-h") printHelpAndExit();
@@ -392,7 +389,7 @@ function parseArgs(argv: string[]): Args {
 
 function printHelpAndExit(): never {
   console.log(`Usage:
-  ./binup.ts [install] [--config ~/.config/binup/packages.json] [--dry-run] [--resolve-only] [--platform linux-x64|linux-arm64|darwin-x64|darwin-arm64] [--best-effort]
+  ./binup.ts [install] [--config ~/.config/binup/packages.json] [--dry-run] [--resolve-only] [--platform linux-x64|linux-arm64|darwin-x64|darwin-arm64]
   ./binup.ts update [repo...] [--config ~/.config/binup/packages.json]
   ./binup.ts add owner/repo [--binary name] [--config ~/.config/binup/packages.json]
 
@@ -1067,19 +1064,7 @@ async function installConfig(
   console.log(
     `Summary: ${current.length} current, ${pending.length} pending, ${errors.length} unresolved, install dir ${INSTALL_DIR}`,
   );
-  if (
-    (args.resolveOnly || args.dryRun) && errors.length > 0 && !args.bestEffort
-  ) {
-    console.warn(
-      "WARN unresolved packages were skipped; use --best-effort to silence this warning",
-    );
-  }
   if (args.resolveOnly || args.dryRun || pending.length === 0) return;
-  if (errors.length > 0 && !args.bestEffort) {
-    throw new Error(
-      `Refusing to install with ${errors.length} unresolved package(s). Re-run with --best-effort to install the resolved packages only.`,
-    );
-  }
 
   const results = await pMap(
     pending,
