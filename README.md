@@ -114,6 +114,15 @@ If the binary name is not the repository name, provide it explicitly:
 ./binup.ts add BurntSushi/ripgrep --binary rg
 ```
 
+Remove packages from the config and delete binaries owned by binup:
+
+```nu
+./binup.ts remove sharkdp/fd BurntSushi/ripgrep
+```
+
+Use `--dry-run` to preview removal. Existing files without matching binup
+metadata are left untouched.
+
 Test with `/tmp/bin` instead of `~/bin`:
 
 ```nu

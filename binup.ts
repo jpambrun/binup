@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-env --allow-read --allow-write --allow-run --allow-net
+#!/usr/bin/env -S deno run --allow-env --allow-read --allow-write --allow-run --allow-net --allow-sys=uid
 
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -6,7 +6,6 @@ import {
   access,
   chmod,
   copyFile,
-  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -15,7 +14,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 
 const HOME_DIR = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".";
 const TMP_DIR = Deno.env.get("TMPDIR") ?? Deno.env.get("TEMP") ??
@@ -102,7 +101,7 @@ export type SelectedAsset = {
   score: number;
   reasons: string[];
 };
-type Command = "install" | "update" | "add";
+type Command = "install" | "update" | "add" | "remove";
 type Args = {
   command: Command;
   config: string;
@@ -245,13 +244,13 @@ export function selectAsset(
 ): SelectedAsset | undefined {
   const hint = selectHint(pkg)?.replaceAll("'", "").toLowerCase();
   const hintApplies = hint
-    ? !hasAny(hint, OTHER_OS_TOKENS[platform.os]) &&
-      !hasAny(hint, OTHER_ARCH_TOKENS[platform.arch])
+    ? !hasAnyToken(hint, OTHER_OS_TOKENS[platform.os]) &&
+      !hasAnyToken(hint, OTHER_ARCH_TOKENS[platform.arch])
     : false;
   const hasPlatformSpecificAssets = release.assets.some((asset) => {
     const name = asset.name.toLowerCase();
     return !hasAny(name, EXCLUDED_ASSET_PARTS) &&
-      hasAny(name, [
+      hasAnyToken(name, [
         ...OS_TOKENS.linux,
         ...OS_TOKENS.darwin,
         ...ARCH_TOKENS.x64,
@@ -285,9 +284,9 @@ function scoreAsset(
   const name = asset.name.toLowerCase();
   if (hasAny(name, EXCLUDED_ASSET_PARTS)) return undefined;
   if (hint && !name.includes(hint)) return undefined;
-  if (hasAny(name, OTHER_OS_TOKENS[platform.os])) return undefined;
+  if (hasAnyToken(name, OTHER_OS_TOKENS[platform.os])) return undefined;
   if (
-    hasAny(name, OTHER_ARCH_TOKENS[platform.arch]) &&
+    hasAnyToken(name, OTHER_ARCH_TOKENS[platform.arch]) &&
     !name.includes("universal")
   ) return undefined;
 
@@ -308,15 +307,15 @@ function scoreAsset(
     } else if (name.startsWith(`${binary}-`) || name.startsWith(`${binary}_`)) {
       const rest = name.slice(binary.length + 1);
       const directPlatformSuffix =
-        startsWithAny(rest, OS_TOKENS[platform.os]) ||
-        startsWithAny(rest, ARCH_TOKENS[platform.arch]);
+        startsWithAnyToken(rest, OS_TOKENS[platform.os]) ||
+        startsWithAnyToken(rest, ARCH_TOKENS[platform.arch]);
       score += directPlatformSuffix ? 90 : 30;
       meaningful = true;
       reasons.push(`binary:${binary}`);
     }
   }
-  const osMatch = hasAny(name, OS_TOKENS[platform.os]);
-  const archMatch = hasAny(name, ARCH_TOKENS[platform.arch]);
+  const osMatch = hasAnyToken(name, OS_TOKENS[platform.os]);
+  const archMatch = hasAnyToken(name, ARCH_TOKENS[platform.arch]);
   const universal = name.includes("universal");
   if (
     platform.os === "darwin" && !osMatch && !universal && archMatch && !hint
@@ -357,8 +356,28 @@ function hasAny(value: string, needles: string[]): boolean {
   return needles.some((needle) => value.includes(needle));
 }
 
-function startsWithAny(value: string, needles: string[]): boolean {
-  return needles.some((needle) => value.startsWith(needle));
+function hasAnyToken(value: string, needles: string[]): boolean {
+  return needles.some((needle) => {
+    let index = value.indexOf(needle);
+    while (index >= 0) {
+      const before = index === 0 ? "" : value[index - 1];
+      const afterIndex = index + needle.length;
+      const after = afterIndex === value.length ? "" : value[afterIndex];
+      if (
+        (!before || !/[a-z0-9]/i.test(before)) &&
+        (!after || !/[a-z0-9]/i.test(after))
+      ) return true;
+      index = value.indexOf(needle, index + 1);
+    }
+    return false;
+  });
+}
+
+function startsWithAnyToken(value: string, needles: string[]): boolean {
+  return needles.some((needle) =>
+    value.startsWith(needle) &&
+    (value.length === needle.length || !/[a-z0-9]/i.test(value[needle.length]))
+  );
 }
 
 function parseArgs(argv: string[]): Args {
@@ -370,7 +389,10 @@ function parseArgs(argv: string[]): Args {
     platform: normalizePlatform(),
     repos: [],
   };
-  if (argv[0] === "install" || argv[0] === "update" || argv[0] === "add") {
+  if (
+    argv[0] === "install" || argv[0] === "update" || argv[0] === "add" ||
+    argv[0] === "remove"
+  ) {
     args.command = argv.shift() as Command;
   }
   for (let i = 0; i < argv.length; i++) {
@@ -392,6 +414,7 @@ function printHelpAndExit(): never {
   ./binup.ts [install] [--config ~/.config/binup/packages.json] [--dry-run] [--resolve-only] [--platform linux-x64|linux-arm64|darwin-x64|darwin-arm64]
   ./binup.ts update [repo...] [--config ~/.config/binup/packages.json]
   ./binup.ts add owner/repo [--binary name] [--config ~/.config/binup/packages.json]
+  ./binup.ts remove owner/repo [...] [--config ~/.config/binup/packages.json] [--dry-run]
 
 Installs into ~/bin. For tests only, set BINUP_BIN_DIR=/tmp/bin.`);
   Deno.exit(0);
@@ -643,11 +666,37 @@ async function buildPlans(
   };
 }
 
-async function downloadAndInstall(plan: Plan): Promise<InstalledRecord> {
+export function assertUniqueInstallTargets(config: Config): void {
+  const owners = new Map<string, string[]>();
+  for (const pkg of config.packages) {
+    for (const binary of binariesOf(pkg)) {
+      const target = join(INSTALL_DIR, binary.name);
+      const entries = owners.get(target) ?? [];
+      entries.push(`${pkg.repo} -> ${binary.name}`);
+      owners.set(target, entries);
+    }
+  }
+  const conflicts = [...owners.entries()].filter(([, entries]) =>
+    entries.length > 1
+  );
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Duplicate install target(s):\n${
+        conflicts.map(([target, entries]) => `${target}: ${entries.join(", ")}`)
+          .join("\n")
+      }`,
+    );
+  }
+}
+
+async function downloadAndInstall(
+  plan: Plan,
+  token: string,
+): Promise<InstalledRecord> {
   const workDir = await mkdtemp(join(TMP_DIR, "binup-"));
   try {
     const assetPath = join(workDir, plan.selected.asset.name);
-    await download(plan.selected.asset.browser_download_url, assetPath);
+    await downloadAsset(plan, token, assetPath);
     const sourcePath = await extractAndFindBinary(
       assetPath,
       workDir,
@@ -691,8 +740,21 @@ async function downloadAndInstall(plan: Plan): Promise<InstalledRecord> {
   }
 }
 
-async function download(url: string, dest: string): Promise<void> {
-  const response = await fetch(url, { headers: { "User-Agent": "binup" } });
+async function downloadAsset(
+  plan: Plan,
+  token: string,
+  dest: string,
+): Promise<void> {
+  const url =
+    `${GITHUB_API}/repos/${plan.pkg.repo}/releases/assets/${plan.selected.asset.id}`;
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/octet-stream",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "binup",
+    },
+  });
   if (!response.ok || !response.body) {
     throw new Error(`Download failed ${response.status}: ${url}`);
   }
@@ -736,8 +798,20 @@ export async function extractAndFindBinary(
   if (binary.path) {
     const explicitPath = join(extractDir, binary.path);
     await rejectSymlink(explicitPath, assetName);
-    await access(explicitPath);
-    return explicitPath;
+    await Deno.stat(explicitPath);
+    const resolvedRoot = await Deno.realPath(extractDir);
+    const resolvedPath = await Deno.realPath(explicitPath);
+    const relativePath = relative(resolvedRoot, resolvedPath);
+    if (
+      relativePath === ".." ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new Error(
+        `Binary path escapes extraction directory in ${assetName}: ${binary.path}`,
+      );
+    }
+    return resolvedPath;
   }
   const walked = await walk(extractDir, binary.name);
   const files = walked.files;
@@ -781,14 +855,14 @@ export function choosePlatformMatch(
   const scored = paths
     .map((path) => {
       const value = path.toLowerCase();
-      if (hasAny(value, OTHER_OS_TOKENS[platform.os])) return undefined;
+      if (hasAnyToken(value, OTHER_OS_TOKENS[platform.os])) return undefined;
       if (
-        hasAny(value, OTHER_ARCH_TOKENS[platform.arch]) &&
+        hasAnyToken(value, OTHER_ARCH_TOKENS[platform.arch]) &&
         !value.includes("universal")
       ) return undefined;
       let score = 0;
-      if (hasAny(value, OS_TOKENS[platform.os])) score += 40;
-      if (hasAny(value, ARCH_TOKENS[platform.arch])) score += 25;
+      if (hasAnyToken(value, OS_TOKENS[platform.os])) score += 40;
+      if (hasAnyToken(value, ARCH_TOKENS[platform.arch])) score += 25;
       if (platform.os === "linux" && value.includes("musl")) score += 3;
       if (platform.os === "linux" && value.includes("gnu")) score += 2;
       if (platform.os === "darwin" && value.includes("apple-darwin")) {
@@ -832,7 +906,7 @@ async function walk(
 }
 
 async function rejectSymlink(path: string, assetName: string): Promise<void> {
-  if ((await lstat(path)).isSymbolicLink()) {
+  if ((await Deno.lstat(path)).isSymlink) {
     throw new Error(`Unsupported symlink in ${assetName}: ${path}`);
   }
 }
@@ -1039,11 +1113,83 @@ async function addPackage(
   return { packages: [pkg] };
 }
 
+export function withoutPackages(
+  config: Config,
+  repos: string[],
+): { config: Config; removed: PackageSpec[]; missing: string[] } {
+  const selected = new Set(repos);
+  const removed = config.packages.filter((pkg) => selected.has(pkg.repo));
+  const present = new Set(removed.map((pkg) => pkg.repo));
+  return {
+    config: {
+      packages: config.packages.filter((pkg) => !selected.has(pkg.repo)),
+    },
+    removed,
+    missing: repos.filter((repo) => !present.has(repo)),
+  };
+}
+
+async function removePackages(
+  configPath: string,
+  config: Config,
+  args: Args,
+): Promise<void> {
+  if (args.repos.length === 0) {
+    throw new Error("remove requires at least one GitHub repo like owner/name");
+  }
+  const result = withoutPackages(config, args.repos);
+  for (const repo of result.missing) {
+    console.warn(`WARN ${repo} is not in ${configPath}`);
+  }
+  if (result.removed.length === 0) return;
+
+  await ensureXattrTools();
+  for (const pkg of result.removed) {
+    for (const binary of binariesOf(pkg)) {
+      const installedPath = join(INSTALL_DIR, binary.name);
+      const record = await readInstalledRecord(installedPath);
+      if (record?.repo === pkg.repo && record.binary === binary.name) {
+        if (args.dryRun) {
+          console.log(`would remove  ${pkg.repo} -> ${installedPath}`);
+        } else {
+          await rm(installedPath);
+          console.log(`removed       ${pkg.repo} -> ${installedPath}`);
+        }
+      } else if (await pathExists(installedPath)) {
+        console.warn(
+          `WARN leaving ${installedPath}: binup metadata does not match ${pkg.repo}`,
+        );
+      }
+    }
+  }
+  if (args.dryRun) {
+    for (const pkg of result.removed) {
+      console.log(`would untrack ${pkg.repo} from ${configPath}`);
+    }
+  } else {
+    await writeConfig(configPath, result.config);
+    for (const pkg of result.removed) {
+      console.log(`untracked     ${pkg.repo} from ${configPath}`);
+    }
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
 async function installConfig(
   config: Config,
   args: Args,
   token: string,
 ): Promise<void> {
+  assertUniqueInstallTargets(config);
   await ensureXattrTools();
   const { plans, errors } = await buildPlans(config, token, args.platform);
   const current = plans.filter((plan) => plan.upToDate);
@@ -1070,7 +1216,7 @@ async function installConfig(
     pending,
     async (plan) => {
       try {
-        await downloadAndInstall(plan);
+        await downloadAndInstall(plan, token);
         console.log(`installed     ${plan.pkg.repo} -> ${plan.binary.name}`);
         return undefined;
       } catch (error) {
@@ -1096,6 +1242,10 @@ async function installConfig(
 async function main(): Promise<void> {
   const args = parseArgs([...Deno.args]);
   const config = await loadConfig(args.config);
+  if (args.command === "remove") {
+    await removePackages(args.config, config, args);
+    return;
+  }
   const token = await ghToken();
   if (args.command === "update") {
     await updateConfigVersions(

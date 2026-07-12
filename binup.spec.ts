@@ -28,7 +28,7 @@ function expect<T>(actual: T) {
     },
   };
 }
-import { binariesOf, candidateTags, choosePlatformMatch, extractAndFindBinary, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, simplifyPackage, type ConfigFile, type PackageSpec, type Release } from "./binup.ts";
+import { assertUniqueInstallTargets, binariesOf, candidateTags, choosePlatformMatch, extractAndFindBinary, isSafeArchivePath, normalizeConfig, normalizePlatform, selectAsset, simplifyPackage, withoutPackages, type ConfigFile, type PackageSpec, type Release } from "./binup.ts";
 
 type Fixture = { pkg: PackageSpec; release: Release; expected: Record<string, Record<string, string | null>> };
 
@@ -14001,6 +14001,17 @@ describe("artifact exclusion rules", () => {
     };
     expect(selectAsset(pkg, release, normalizePlatform("linux-x64"), "tool")?.asset.name).toBe("tool-v1.0.0-linux-x64.tar.gz");
   });
+
+  test("does not treat platform aliases inside product names as tokens", () => {
+    const pkg: PackageSpec = { repo: "Macchina-CLI/macchina", binaries: [{ name: "macchina" }] };
+    const release: Release = {
+      tag_name: "v1.0.0",
+      assets: [
+        { id: 1, name: "macchina-linux-x86_64.tar.gz", size: 1, browser_download_url: "https://example.invalid/bin" },
+      ],
+    };
+    expect(selectAsset(pkg, release, normalizePlatform("linux-x64"), "macchina")?.asset.name).toBe("macchina-linux-x86_64.tar.gz");
+  });
 });
 
 describe("simple package config rules", () => {
@@ -14025,6 +14036,31 @@ describe("simple package config rules", () => {
       repo: "owner/tool",
       binaries: [{ name: "tool" }, { name: "tool-helper", path: "bin/helper" }],
     });
+  });
+
+  test("rejects duplicate install targets across packages", () => {
+    assert.throws(
+      () => assertUniqueInstallTargets({
+        packages: [
+          { repo: "owner/one", binaries: [{ name: "tool" }] },
+          { repo: "owner/two", binaries: [{ name: "tool" }] },
+        ],
+      }),
+      /Duplicate install target/,
+    );
+  });
+
+  test("removes selected packages while preserving order and reports missing repos", () => {
+    const one = { repo: "owner/one" };
+    const two = { repo: "owner/two", binaries: [{ name: "second" }] };
+    const three = { repo: "owner/three" };
+    const result = withoutPackages(
+      { packages: [one, two, three] },
+      ["owner/two", "owner/missing"],
+    );
+    expect(result.config.packages).toEqual([one, three]);
+    expect(result.removed).toEqual([two]);
+    expect(result.missing).toEqual(["owner/missing"]);
   });
 
   test("fixtures do not carry old schema fields", () => {
@@ -14092,6 +14128,21 @@ describe("archive path safety", () => {
       const proc = new Deno.Command("tar", { args: ["-czf", assetPath, "-C", sourceDir, "tool"] }).outputSync();
       expect(proc.code).toBe(0);
       await expect(extractAndFindBinary(assetPath, workDir, "tool.tar.gz", { name: "tool" }, normalizePlatform("linux-x64"))).rejects.toThrow("Unsupported symlink");
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects explicit binary paths through external parent symlinks", async () => {
+    const workDir = await mkdtemp(join(tmpdir(), "binup-spec-"));
+    try {
+      const sourceDir = join(workDir, "source");
+      const assetPath = join(workDir, "tool.tar.gz");
+      await mkdir(sourceDir);
+      await symlink("/bin", join(sourceDir, "link"));
+      const proc = new Deno.Command("tar", { args: ["-czf", assetPath, "-C", sourceDir, "link"] }).outputSync();
+      expect(proc.code).toBe(0);
+      await expect(extractAndFindBinary(assetPath, workDir, "tool.tar.gz", { name: "sh", path: "link/sh" }, normalizePlatform("linux-x64"))).rejects.toThrow("Binary path escapes extraction directory");
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }
