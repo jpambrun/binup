@@ -1,6 +1,6 @@
 # binup
 
-A single-file Deno GitHub release binary installer to replace `~/bin/install.sh`
+A single-file Bun GitHub release binary installer to replace `~/bin/install.sh`
 and global aqua usage. It only installs binaries published as GitHub release
 assets.
 
@@ -24,13 +24,13 @@ assets.
 ```text
 binup.ts                      # executable single-file implementation
 binup.spec.ts                 # offline artifact-selection tests
-deno.json                     # local dev tasks, not required to run binup.ts
+package.json                  # local dev scripts, not required to run binup.ts
 ~/.config/binup/packages.json # default editable config
 ```
 
 ## Requirements
 
-No project dependencies are required; run the script directly with Deno.
+No project dependencies are required; run the script directly with Bun.
 
 Runtime state uses extended attributes, so Linux needs `getfattr` and `setfattr`
 available; macOS needs `xattr`.
@@ -91,7 +91,7 @@ Install into the default location, `~/bin`:
 Run without the executable bit if needed:
 
 ```nu
-deno run --allow-env --allow-read --allow-write --allow-run --allow-net binup.ts update
+bun binup.ts update
 ```
 
 Update configured packages to their latest GitHub releases:
@@ -179,8 +179,10 @@ There is no separate state file or installer lock.
 ## Tests
 
 ```nu
-deno test --allow-env --allow-read --allow-write --allow-run binup.spec.ts
+bun test binup.spec.ts
 ```
+
+For type checking, run `bun install` once, then `bun run check`.
 
 The tests do not call GitHub. `binup.spec.ts` contains captured release asset
 metadata for the current package list and tests artifact selection for:

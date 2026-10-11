@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-env --allow-read --allow-write --allow-run --allow-net --allow-sys=uid
+#!/usr/bin/env bun
 
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -8,20 +8,23 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  lstat,
   readdir,
   readFile,
+  realpath,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 
-const HOME_DIR = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".";
-const TMP_DIR = Deno.env.get("TMPDIR") ?? Deno.env.get("TEMP") ??
-  Deno.env.get("TMP") ?? "/tmp";
-const INSTALL_DIR = Deno.env.get("BINUP_BIN_DIR") ??
-  Deno.env.get("MY_INSTALLER_BIN_DIR") ?? join(HOME_DIR, "bin");
-const XATTR_NAME = Deno.build.os === "darwin"
+const HOME_DIR = process.env.HOME ?? process.env.USERPROFILE ?? ".";
+const TMP_DIR = process.env.TMPDIR ?? process.env.TEMP ??
+  process.env.TMP ?? "/tmp";
+const INSTALL_DIR = process.env.BINUP_BIN_DIR ??
+  process.env.MY_INSTALLER_BIN_DIR ?? join(HOME_DIR, "bin");
+const XATTR_NAME = process.platform === "darwin"
   ? "com.jpambrun.binup"
   : "user.binup";
 const CHECK_CONCURRENCY = 12;
@@ -179,7 +182,7 @@ const OTHER_ARCH_TOKENS: Record<Arch, string[]> = {
 };
 
 export function normalizePlatform(
-  input = `${Deno.build.os}-${Deno.build.arch}`,
+  input = `${process.platform}-${process.arch}`,
 ): Platform {
   const value = input.toLowerCase().replace("macos", "darwin");
   const match = value.match(/^(linux|darwin)[-_/](.+)$/);
@@ -417,7 +420,7 @@ function printHelpAndExit(): never {
   ./binup.ts remove owner/repo [...] [--config ~/.config/binup/packages.json] [--dry-run]
 
 Installs into ~/bin. For tests only, set BINUP_BIN_DIR=/tmp/bin.`);
-  Deno.exit(0);
+  process.exit(0);
 }
 
 export function normalizeConfig(config: ConfigFile): Config {
@@ -547,7 +550,7 @@ async function commandExists(command: string): Promise<boolean> {
 }
 
 async function ensureXattrTools(): Promise<void> {
-  const commands = Deno.build.os === "darwin"
+  const commands = process.platform === "darwin"
     ? ["xattr"]
     : ["getfattr", "setfattr"];
   const missing = [];
@@ -564,7 +567,7 @@ async function readInstalledRecord(
 ): Promise<InstalledRecord | undefined> {
   try {
     await access(path);
-    const command = Deno.build.os === "darwin"
+    const command = process.platform === "darwin"
       ? ["xattr", "-p", XATTR_NAME, path]
       : ["getfattr", "--only-values", "-n", XATTR_NAME, path];
     const result = await output(command);
@@ -585,7 +588,7 @@ async function writeInstalledRecord(
   record: InstalledRecord,
 ): Promise<void> {
   const value = JSON.stringify(record);
-  const command = Deno.build.os === "darwin"
+  const command = process.platform === "darwin"
     ? ["xattr", "-w", XATTR_NAME, value, path]
     : ["setfattr", "-n", XATTR_NAME, "-v", value, path];
   await run(command);
@@ -707,7 +710,7 @@ async function downloadAndInstall(
     await mkdir(INSTALL_DIR, { recursive: true });
     const tmpTarget = join(
       INSTALL_DIR,
-      `.${plan.binary.name}.tmp-${Deno.pid}-${plan.selected.asset.id}-${randomUUID()}`,
+      `.${plan.binary.name}.tmp-${process.pid}-${plan.selected.asset.id}-${randomUUID()}`,
     );
     await copyFile(sourcePath, tmpTarget);
     await chmod(tmpTarget, 0o755);
@@ -758,7 +761,7 @@ async function downloadAsset(
   if (!response.ok || !response.body) {
     throw new Error(`Download failed ${response.status}: ${url}`);
   }
-  await Deno.writeFile(dest, response.body);
+  await Bun.write(dest, response);
 }
 
 export async function extractAndFindBinary(
@@ -798,9 +801,9 @@ export async function extractAndFindBinary(
   if (binary.path) {
     const explicitPath = join(extractDir, binary.path);
     await rejectSymlink(explicitPath, assetName);
-    await Deno.stat(explicitPath);
-    const resolvedRoot = await Deno.realPath(extractDir);
-    const resolvedPath = await Deno.realPath(explicitPath);
+    await stat(explicitPath);
+    const resolvedRoot = await realpath(extractDir);
+    const resolvedPath = await realpath(explicitPath);
     const relativePath = relative(resolvedRoot, resolvedPath);
     if (
       relativePath === ".." ||
@@ -906,7 +909,7 @@ async function walk(
 }
 
 async function rejectSymlink(path: string, assetName: string): Promise<void> {
-  if ((await Deno.lstat(path)).isSymlink) {
+  if ((await lstat(path)).isSymbolicLink()) {
     throw new Error(`Unsupported symlink in ${assetName}: ${path}`);
   }
 }
@@ -934,18 +937,17 @@ async function assertSafeArchiveEntries(
 async function output(
   command: string[],
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = new Deno.Command(command[0], {
-    args: command.slice(1),
-    stdout: "piped",
-    stderr: "piped",
+  const proc = Bun.spawn(command, {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  const { code, stdout, stderr } = await proc.output();
-  const decoder = new TextDecoder();
-  return {
-    code,
-    stdout: decoder.decode(stdout),
-    stderr: decoder.decode(stderr),
-  };
+  const [code, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { code, stdout, stderr };
 }
 
 async function runOutput(command: string[]): Promise<string> {
@@ -1176,10 +1178,10 @@ async function removePackages(
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await Deno.lstat(path);
+    await lstat(path);
     return true;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
 }
@@ -1240,7 +1242,7 @@ async function installConfig(
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs([...Deno.args]);
+  const args = parseArgs(process.argv.slice(2));
   const config = await loadConfig(args.config);
   if (args.command === "remove") {
     await removePackages(args.config, config, args);
@@ -1268,6 +1270,6 @@ async function main(): Promise<void> {
 if (import.meta.main) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
-    Deno.exit(1);
+    process.exit(1);
   });
 }

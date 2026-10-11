@@ -5,5 +5,13 @@
   "type": "module",
   "bin": {
     "binup": "./binup.ts"
+  },
+  "scripts": {
+    "test": "bun test binup.spec.ts",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
   }
 }
